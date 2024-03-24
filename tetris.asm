@@ -2,7 +2,7 @@
 # This file contains our implementation of Tetris.
 #
 # Student 1: Sarah Lloyd-Smith, 1008082860
-# Student 2: Name, Student Number (if applicable)
+# Student 2: Janna Alyssa Lim, 1009101455
 ######################## Bitmap Display Configuration ########################
 # - Unit width in pixels:       8
 # - Unit height in pixels:      8
@@ -21,7 +21,13 @@ ADDR_DSPL:
 # The address of the keyboard. Don't forget to connect it!
 ADDR_KBRD:
     .word 0xffff0000
-    
+
+DARK_PURPLE:
+    .word 0x1f124a # colour for wall
+LIGHT_GREY:
+    .word 0x303030 # colour for background
+DARK_GREY:
+    .word 0x202020 # colour for background
 PINK:
     .word 0xff3c8c  # colour for T tetromino
 BLUE:
@@ -52,7 +58,33 @@ STARTING_X_OFFSET:
 	# Run the Tetris game.
 main:
     # Initialize the game
-
+    lw $t0, ADDR_DSPL   # $t0 stores the base address for display
+    lw $t1, LIGHT_GREY  # $t1 stores one of the bg colours
+    lw $t2, DARK_GREY   # $t2 stores another one of the bg colours
+    lw $t7, DARK_PURPLE
+    
+    add $t5, $zero, $zero # initialize loop variables
+    addi $t6, $zero, 16 
+    jal draw_checkboard
+    
+    wall_drawing:
+        lw $t0, ADDR_DSPL # re-initialize loop variables and address
+        add $t5, $zero, $zero 
+        addi $t6, $zero, 32
+        jal draw_left_wall
+        
+        lw $t0, ADDR_DSPL # re-initialize loop variables and address
+        add $t5, $zero, $zero
+        addi $t6, $zero, 32
+        jal draw_right_wall
+        
+        lw $t0, ADDR_DSPL # re-initialize loop variables and address
+        add $t5, $zero, $zero
+        addi $t6, $zero, 32
+        jal draw_floor
+    
+    j exit
+    
 game_loop:
 	# 1a. Check if key has been pressed
     # 1b. Check which key has been pressed
@@ -198,3 +230,72 @@ draw_T_tetromino:
     sw $t0, 0($sp)              # Store value of $t0 (x offset) on stack
     jal draw_rectangle          # Call function to draw line
     jr $ra                      # return
+    
+# -----------------------------------------------------------------------------------------------------------------------------
+# Functions for drawing background
+draw_checkboard:
+    beq $t5, $t6, wall_drawing      # go back to main after checkboard is finished
+    addi $t5, $t5, 1                # increment counter
+    add $t3, $zero, $zero           # re-initialize loop counters
+    addi $t4, $zero, 16
+    jal start_row_1
+    add $t3, $zero, $zero           # re-initialize loop counters
+    addi $t4, $zero, 16
+    jal start_row_2
+    j draw_checkboard
+end_draw_checkboard:
+    jr $ra
+    
+start_row_1:
+    beq $t3, $t4, end_row_1
+    sw $t1, 0($t0) 		# paint the first pixel dark grey
+    addi $t0, $t0, 4   	# move to the next pixel over in the bitmap
+    sw $t2, 0($t0) 		# paint the second pixel light grey
+    addi $t0, $t0, 4   	# move to the next pixel over in the bitmap
+    addi $t3, $t3, 1
+    j start_row_1
+end_row_1:
+    jr $ra
+
+start_row_2:
+    beq $t3, $t4, end_row_2
+    sw $t2, 0($t0) 		# paint the first pixel light grey
+    addi $t0, $t0, 4   	# move to the next pixel over in the bitmap
+    sw $t1, 0($t0) 		# paint the second pixel dark grey
+    addi $t0, $t0, 4   	# move to the next pixel over in the bitmap
+    addi $t3, $t3, 1
+    j start_row_2
+end_row_2:
+    jr $ra
+    
+# Drawing the walls of the game
+draw_left_wall:
+    beq $t5, $t6, end_draw_left_wall
+    sw $t7, 0($t0) 		# paint first value at offset
+    addi $t0, $t0, 128  # increment memory position
+    addi $t5, $t5, 1    # increment loop counter 
+    j draw_left_wall
+end_draw_left_wall:
+    jr $ra
+
+draw_right_wall:
+    beq $t5, $t6, end_draw_right_wall
+    sw $t7, 124($t0)    # paint first value at offset
+    addi $t0, $t0, 128  # increment memory position
+    addi $t5, $t5, 1    # increment loop counter 
+    j draw_right_wall
+end_draw_right_wall:
+    jr $ra
+
+draw_floor:
+    beq $t5, $t6, end_draw_floor
+    sw $t7, 3968($t0)   # paint first value at offset
+    addi $t0, $t0, 4    # increment memory position
+    addi $t5, $t5, 1    # increment loop counter 
+    j draw_floor
+end_draw_floor:
+    jr $ra
+
+exit:
+li $v0, 10 # terminate the program gracefully
+syscall
