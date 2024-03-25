@@ -110,6 +110,27 @@ key_pressed:
     beq $t2, 113, pressed_q         # Check if q was pressed
     b game_loop                     # If w, a, s, d, or q was not pressed, go back to top of loop
     # 2a. Check for collisions
+    
+    # When a is pressed, check if there is a collision on the left
+    # When d is pressed, check if there is a collision on the right
+    # When s is pressed, check if there is a collision below, if there is keep tetromino in current spot, 
+    # check if line is full, then create new tetromino at the starting position
+    
+    # For a and d, use TETROMINO and ROTATION to know the exact shape of the current tetromino being moved, therefore will know what index the left-most
+    # or right-most pixel will be at, check if that pixel -4 for left is equal to wall colour or if pixel +4 for right is equal to wall colour. If 
+    # equal to wall colour, do not update tetromino and go back to top of game_loop
+    # Another strategy, current array address is provided, iterate through array, for left, check if every pixel - 4 is not the wall colour, for right,
+    # check if every pixel + 4 is not the wall colour
+    
+    # For s, current array address provided, iterate through all elements of the array, check for all pixels + 128. If all pixels at spot below is a colour
+    # that is not one of the checkerboard colours, then there is collision. Then check the lines that the current tetromino is now a part of to see if any
+    # of the lines are full (start at pixel after left wall, if any pixels are one of the checkerboard colours, the line is not full move onto the next one)
+    # If a line is full, need to erase all pixels back to the checkerboard colour, and move all the lines above that are not checkerboard colour down by one
+    
+    # copy the entire background grid and store it in memory
+    # For previously placed tetrominoes, 
+
+    
 	# 2b. Update locations (paddle, ball)
 	# 3. Draw the screen
 	# 4. Sleep
@@ -443,64 +464,7 @@ move_down_start:
 move_down_end:
     jr $ra
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------
-# Functions for general drawing and setting
-draw_rectangle:
-    # $a0: register to store original x offset
-    # $a1: register to store original y offset
-    # $t0: register for starting address
-    # $t1: register to store x offset
-    # $t2: register to store y offset
-    # $t3: register to store width in pixels
-    # $t4: register to store the length in pixels
-    # $t5: register to store current address
-    # $t9: register to store colour
-    
-    lw $t0, ADDR_DSPL           # set $t0 to starting address
-    lw $a0, 0($sp)              # Get x offset from the stack
-    addi $sp, $sp, 4            # Update stack pointer 
-    addi $t1, $a0, 0            # Set $t1 to $a0
-    lw $a1, 0($sp)              # Get y offset from the stack
-    addi $sp, $sp, 4            # Update stack pointer
-    addi $t2, $a1, 0            # Set $t2 to $a1
-    lw $t3, 0($sp)              # Get width from the stack
-    addi $sp, $sp, 4            # Update stack pointer
-    lw $t4, 0($sp)              # Get length from the stack
-    addi $sp, $sp, 4            # Update stack pointer
-    lw $t9, 0($sp)              # Get colour from the stack
-    addi $sp, $sp, 4            # Update stack pointer
-    
-    # Horizontal offset and and width
-    sll $t1, $a0, 2             # Calculate horizontal offset (x offset * 4)
-    sll $t3, $t3, 2             # Convert the width from pixels to bytes (multiply by 4)
-    add $t3, $t3, $t1           # Add original starting point to width to get end width
-    
-    # Vertical offset and length
-    sll $t2, $t2, 7             # Calculate vertical offset (y offset * 128)
-    sll $t4, $t4, 7             # Convert the length from pixels to bytes (multiply by 128)
-    add $t4, $t4, $t2           # Add original starting point to the length to get the end length
-    
-draw_reactangle_top:
-    sll $t1, $a0, 2             # Calculate horizontal offset (x offset * 4)
-    add $t5, $t1, $t2           # update current offset value where the pixel will be drawn
-    
-draw_line_top:
-    add $t5, $t1, $t2                   # Calculate total offset
-    add $t5, $t5, $t0                   # Add offset to starting address
-    sw $t9, 0($t5)                      # Draw pixel at starting address
-    addi $t1, $t1, 4                    # Increment horizontal offset
-    beq $t1, $t3, draw_line_end         # Check if offset == width, if so exit loop
-    j draw_line_top                     # Jump back to top of loop
-    
-draw_line_end:
-    addi $t2, $t2, 128                  # Increment the vertical offset
-    beq $t2 ,$t4, draw_rectangle_end    # Check if length offset == end length, if so exit loop
-    j draw_reactangle_top               # Jump back to top of loop
-    
-draw_rectangle_end:
-    jr $ra                      # return
-    
-    
-    
+# Functions for general drawing and setting  
 set_rectangle:
     # Make a rectangle but instead of drawing to the bitmap, store into the given array
     
