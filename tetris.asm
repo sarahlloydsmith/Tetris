@@ -14,6 +14,18 @@
     .data
 ##############################################################################
 # Immutable Data
+ROTATION:
+    .word 0         # Number to store what rotation the movable tetromino is on (from 0 (starting posision) to 3, is reset to 0 when new tetromino is made)
+TETROMINO_TYPE:
+    .word 116       # ASCII number corresponding to the type of the movable tetromino (starting tetromino is T)
+T_TETROMINO:
+    .space 16       # Array for the pixels for the T-tertromino (starting position is the second element)
+T_TETROMINO_R1:
+    .space 16       # Array for the pixels for the T-Tetromino after its first rotation (strting position is the third element)
+T_TETROMINO_R2:
+    .space 16       # Array for the pixels for the T-Tetromino after its second rotation (starting position is the third element)
+T_TETROMINO_R3:
+    .space 16       # Array for the pixels for the T-Tetromino after its third rotation (starting position is the second element)
 ##############################################################################
 # The address of the bitmap display. Don't forget to connect it!
 ADDR_DSPL:
@@ -58,36 +70,45 @@ STARTING_X_OFFSET:
 	# Run the Tetris game.
 main:
     # Initialize the game
-    lw $t0, ADDR_DSPL   # $t0 stores the base address for display
-    lw $t1, LIGHT_GREY  # $t1 stores one of the bg colours
-    lw $t2, DARK_GREY   # $t2 stores another one of the bg colours
-    lw $t7, DARK_PURPLE
+    jal draw_background     # Draw the background
     
-    add $t5, $zero, $zero # initialize loop variables
-    addi $t6, $zero, 16 
-    jal draw_checkboard
+    # Drawing the starting tetromino
+    # $t0: starting x offset
+    # $t1: starting y offset 
+    # $t2: array address
+    # $t9: colour
     
-    wall_drawing:
-        lw $t0, ADDR_DSPL # re-initialize loop variables and address
-        add $t5, $zero, $zero 
-        addi $t6, $zero, 32
-        jal draw_left_wall
-        
-        lw $t0, ADDR_DSPL # re-initialize loop variables and address
-        add $t5, $zero, $zero
-        addi $t6, $zero, 32
-        jal draw_right_wall
-        
-        lw $t0, ADDR_DSPL # re-initialize loop variables and address
-        add $t5, $zero, $zero
-        addi $t6, $zero, 32
-        jal draw_floor
-    
-    j exit
+    addi $t1, $zero, 1          # Initialize y offset
+    addi $t0, $zero, 15         # Initialize x offset
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t1, 0($sp)              # Store y offset onto the stack
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t0, 0($sp)              # Store x offset into the stack
+    jal create_T_tetromino      # Set the array for the current tetromino
+    lw $t9, PINK                # Store colour in register $t9
+    la $t2, T_TETROMINO         # Store array address in register $t2
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t9, 0($sp)              # Store colour onto the stack
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t2, 0($sp)              # Store the array address onto the stack
+    jal draw_tetromino
+    j game_loop
     
 game_loop:
 	# 1a. Check if key has been pressed
+	lw $t0, ADDR_KBRD              # Set $t0 to the address of the keyboard
+	lw $t1, 0($t0)                 # Load the first word from the keyboard
+	beq $t1, 1, key_pressed        # If key was pressed ($t1 == 1), jump to key_pressed
+	b game_loop                    # If key was not pressed go back to top of game_loop
     # 1b. Check which key has been pressed
+key_pressed:
+    lw $t2, 4($t0)                  # Load second word into $t2
+    beq $t2, 97, pressed_a          # Check if a was pressed
+    beq $t2, 115, pressed_s         # Check if s was pressed
+    beq $t2, 100, pressed_d         # Check if d was pressed
+    beq $t2, 119, pressed_w         # Check if w was pressed
+    beq $t2, 113, pressed_q         # Check if q was pressed
+    b game_loop                     # If w, a, s, d, or q was not pressed, go back to top of loop
     # 2a. Check for collisions
 	# 2b. Update locations (paddle, ball)
 	# 3. Draw the screen
@@ -96,8 +117,333 @@ game_loop:
     #5. Go back to 1
      b game_loop
 
+#---------------------------------------------------------------------------------------------------------------------------------------------------------
+# Code to handle what key was pressed
+
+pressed_a:
+    # $s0: register to store array address
+    # $s1: register to store the ROTATION value
+    # $t9: register to store the colour of the pixel
+    lw $s1, ROTATION                # Store the rotation value in $s1
+    beq $s1, 1, a_rotation_1        # If the tetromino has been rotated once
+    beq $s1, 2, a_rotation_2        # If the tetromino has been rotated twice
+    beq $s1, 3, a_rotation_3        # If the tetromino has been rotated thrice 
+    la $s0, T_TETROMINO             # Store the array address into register $t0
+    j pressed_a_continuation        # Continue
+    
+a_rotation_1:
+    la $s0, T_TETROMINO_R1          # Store the array address into register $s0
+    j pressed_a_continuation        # Continue
+    
+a_rotation_2:
+    la $s0, T_TETROMINO_R2          # Store the array address into register $s0
+    j pressed_a_continuation        # Continue
+    
+a_rotation_3:
+    la $s0, T_TETROMINO_R3          # Store the array address into register $s0
+    j pressed_a_continuation        # Continue
+    
+pressed_a_continuation:
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $s0, 0($sp)                  # Put array address on the stack
+    jal move_left                   # Update the array to move one to the left
+    lw $t9, PINK                    # Store colour in register $t9
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $t9, 0($sp)                  # Store colour onto the stack
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $s0, 0($sp)                  # Put array address on the stack
+    jal draw_background         # Redraw background
+    jal draw_tetromino              # Draw updated tetromino
+    j game_loop
 
 
+
+pressed_s:
+    # $s0: register to store array address
+    # $s1: register to store ROTATION value
+    # $t9: register to store colour of the pixel
+    lw $s1, ROTATION                # Store the rotation value in $s1
+    beq $s1, 1, s_rotation_1        # If tetromino has been rotated once
+    beq $s1, 2, s_rotation_2        # If tetromino has been rotated twice
+    beq $s1, 3, s_rotation_3        # If tetromino has been rotated thrice
+    la $s0, T_TETROMINO             # Store the array address into reegister $t0
+    j pressed_s_continuation        # Continue
+    
+s_rotation_1:
+    la $s0, T_TETROMINO_R1          # Store the array address in $s0
+    j pressed_s_continuation        # Continue
+    
+s_rotation_2:
+    la $s0, T_TETROMINO_R2          # Store the array address in $s0
+    j pressed_s_continuation        # Continue
+    
+s_rotation_3:
+    la $s0, T_TETROMINO_R3          # Store the array address in $s0
+    j pressed_s_continuation        # Continue
+    
+pressed_s_continuation:
+    # $s0: register to store array address
+    # $s1: register to store ROTATION value
+    # $t9: register to store colour of the pixel
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $s0, 0($sp)                  # Put array address on the stack
+    jal move_down                   # Update the array to move one row down
+    lw $t9, PINK                    # Store colour in register $t9
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $t9, 0($sp)                  # Store colour onto the stack
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $s0, 0($sp)                  # Put array address on the stack
+    jal draw_background         # Redraw background
+    jal draw_tetromino              # Draw updated tetromino
+    j game_loop
+    
+    
+
+pressed_d:
+    # $s0: register to store array address
+    # $s1: register to store ROTATION value
+    # $t9: register to store colour of the pixel
+    lw $s1, ROTATION                # Store value of ROTATION in $s1
+    beq $s1, 1, d_rotation_1        # If tetromino has been rotated once
+    beq $s1, 2, d_rotation_2        # If tetromino has been rotated twice
+    beq $s1, 3, d_rotation_3        # If tetromino has been rotated thrice
+    la $s0, T_TETROMINO             # Store the array address into register $t0
+    j pressed_d_continuation        # Continue
+    
+d_rotation_1:
+    la $s0, T_TETROMINO_R1          # Store the array address in $s0
+    j pressed_d_continuation        # Continue
+    
+d_rotation_2:
+    la $s0, T_TETROMINO_R2          # Store the array address in $s0
+    j pressed_d_continuation        # Continue
+    
+d_rotation_3:
+    la $s0, T_TETROMINO_R3          # Store the array address in $s0
+    j pressed_d_continuation        # Continue
+
+pressed_d_continuation:
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $s0, 0($sp)                  # Put array address on the stack
+    jal move_right                  # Update the array to move one to the right
+    lw $t9, PINK                    # Store colour in register $t9
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $t9, 0($sp)                  # Store colour onto the stack
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $s0, 0($sp)                  # Put array address on the stack
+    jal draw_background         # Redraw background
+    jal draw_tetromino              # Draw updated tetromino
+    j game_loop
+    
+    
+    
+pressed_w:
+    # $t1: register to store the rotation number
+    lw $t1, ROTATION                # Load the value of ROTATION into register $t1
+    beq $t1, 0, go_to_R1            # Check if shape is at starting rotation position
+    beq $t1, 1, go_to_R2            # Check if shape is at first rotation position
+    beq $t1, 2, go_to_R3            # Check if shape is at second rotation position
+    beq $t1, 3, go_to_R             # Check if shape is at third rotation position
+    
+go_to_R:
+    # $t1: register to store the rotation number address
+    # $t2: register to store the starting address for T_TETROMINO_R3
+    # $t3: register to store the starting address + 4, to get value at second index, where the starting position is
+    # $t4: register to store the value at the second indes of the starting address
+    # $t5: register to store the address for T_TETROMINO
+    # $t6: register to store the colour
+    # $t7: register to store the value of the new rotation number (0)
+    la $t2, T_TETROMINO_R3          # Get starting address for T_TETROMINO_R3
+    addi $t3, $t2, 4                # Add 4 to $t2 and store it in $t3 (to get the starting position)
+    lw $t4, ($t3)                   # Get value at the second index
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $t4, 0($sp)                  # Put the value of $t4 on the stack
+    jal T_R3_to_R_tetromino         # Create the R1 T-Tetromino
+    la $t1, ROTATION                # Store the address for the rotation number
+    addi $t7, $zero, 0              # Store 0 in $t7
+    sw $t7, 0($t1)                  # Store 0 as the new rotation number
+    lw $t6, PINK                    # Store the colour in $t6
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $t6, 0($sp)                  # Store the colour on the stack
+    la $t5, T_TETROMINO             # Store the address of the array in $t5
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $t5, 0($sp)                  # Store the value of $t5 on the stack
+    jal draw_background         # Redraw background
+    jal draw_tetromino              # Draw tetromino
+    j game_loop
+    
+go_to_R1:
+    # $t1: register to store the rotation number address
+    # $t2: register to store starting address for T_TETROMINO
+    # $t3: register to store starting address + 4,  to get value at second index, where the starting position is
+    # $t4: register to store the value at the second index of the starting address
+    # $t5: register to store address for T_TETROMINO_R1
+    # $t6: register to store the colour
+    # $t7: register to store value of new rotation number (1)
+    la $t2, T_TETROMINO             # Get starting address for T_TETROMINO
+    addi $t3, $t2, 4                # Add 4 to $t2 and store it in $t3 (to get the starting position)
+    lw $t4, ($t3)                   # Get value at the second index
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $t4, 0($sp)                  # Put the value of $t4 on the stack
+    jal create_T_R1_tetromino       # Create the R1 T-Tetromino
+    la $t1, ROTATION                # Store the address for the rotation number
+    addi $t7, $zero, 1              # Store 1 in $t7
+    sw $t7, 0($t1)                  # Store 1 as the new rotation number
+    lw $t6, PINK                    # Store the colour in $t6
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $t6, 0($sp)                  # Store the colour on the stack
+    la $t5, T_TETROMINO_R1          # Store the address of the array in $t5
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $t5, 0($sp)                  # Store the value of $t5 on the stack
+    jal draw_background         # Redraw background
+    jal draw_tetromino              # Draw tetromino
+    j game_loop
+    
+go_to_R2:
+    # $t1: register to store the rotation number address
+    # $t2: register to store the starting address for T_TETROMINO_R1
+    # $t3: register to store the starting address + 8,  to get value at third index, where the starting position is
+    # $t4: register to store the value at the second indes of the starting address
+    # $t5: register to store the address for T_TETROMINO_R2
+    # $t6: register to store the colour
+    # $t7: register to store the value of the new rotation number (2)
+    la $t2, T_TETROMINO_R1          # Get the starting address for T_TETROMINO_R1
+    addi $t3, $t2, 8                # Add 8 to $t2 and store it in $t3 (to get the starting position)
+    lw $t4, 0($t3)                  # Get the value at the second index and store it in $t4
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $t4, 0($sp)                  # Store value of $t4 on the stack
+    jal create_T_R2_tetromino       # Create the R2 T-Tetromino
+    la $t1, ROTATION                # Store the address for the ROTATION value
+    addi $t7, $zero, 2              # Store 2 in $t7
+    sw $t7, 0($t1)                  # Store 2 as the new rotation number
+    lw $t6, PINK                    # Store the colour in $t6
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $t6, 0($sp)                  # Store the colour on the stack
+    la $t5, T_TETROMINO_R2          # Store the address of the array in $t5
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $t5, 0($sp)                  # Store the address of the array on the stack
+    jal draw_background         # Redraw background
+    jal draw_tetromino              # Draw new tetromino
+    j game_loop
+    
+    
+    
+go_to_R3:
+    # $t1: register to store the rotation number address
+    # $t2: register to store the starting address for T_TETROMINO_R2
+    # $t3: register to store the starting address + 8,  to get value at third index, where the starting position is
+    # $t4: register to store the value at the second indes of the starting address
+    # $t5: register to store the address for T_TETROMINO_R3
+    # $t6: register to store the colour
+    # $t7: register to store the value of the new rotation number (3)
+    la $t2, T_TETROMINO_R2          # Get the starting address for T_TETROMINO_R2
+    addi $t3, $t2, 8                # Add 8 to $t2 and store it in $t3 (to get the starting position)
+    lw $t4, 0($t3)                  # Get the value at the second index and store it in $t4
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $t4, 0($sp)                  # Store value of $t4 on the stack
+    jal create_T_R3_tetromino       # Create the R2 T-Tetromino
+    la $t1, ROTATION                # Store the address for the ROTATION value
+    addi $t7, $zero, 3              # Store 3 in $t7
+    sw $t7, 0($t1)                  # Store 3 as the new rotation number
+    lw $t6, PINK                    # Store the colour in $t6
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $t6, 0($sp)                  # Store the colour on the stack
+    la $t5, T_TETROMINO_R3          # Store the address of the array in $t5
+    addi $sp, $sp, -4               # Update stack pointer
+    sw $t5, 0($sp)                  # Store the address of the array on the stack
+    jal draw_background         # Redraw background
+    jal draw_tetromino              # Draw new tetromino
+    j game_loop
+
+pressed_q:
+    li $v0, 10                      # Quit gracefully
+	syscall
+	
+	
+	
+move_right:
+    # $a0: register to store the original array's address
+    # $t0: register to store the address at the current index
+    # $t1: register to store the index
+    # $t2: register to store the original value at element
+    # $t3: register to store the updated address
+    
+    # Get parameters from the stack
+    lw $a0, 0($sp)              # Get array address from the stack
+    addi $sp, $sp, 4            # Update stack pointer
+    
+    add $t0, $zero, $a0         # Set $t0 to starting array address
+    addi $t1, $zero, 0          # Set index to 0
+    
+    # Iterate through the array provided
+move_right_start:
+    add $t0, $a0, $t1                   # Add index offset to the original address
+    lw $t2, 0($t0)                      # Load value of array's current element
+    addi $t3, $t2, 4                    # Add 4 to the original value and store it in $t2
+    sw $t3, 0($t0)                      # Store the updated value in the array
+    addi $t1, $t1, 4                    # Increment the index by 4
+    beq $t1, 16, move_right_end         # If $t1 == 16, array has been fully iterated through, exit loop
+    j move_right_start                  # If array has not been fully iterated through, go back to top of loop
+move_right_end:
+    jr $ra
+    
+    
+
+move_left:
+    # $a0: register to store the original array's address
+    # $t0: register to store the address at the current index
+    # $t1: register to store the index
+    # $t2: register to store the original value at element
+    # $t3: register to store the updated address
+    
+    # Get parameters from the stack
+    lw $a0, 0($sp)              # Get array address from the stack
+    addi $sp, $sp, 4            # Update stack pointer
+    
+    add $t0, $zero, $a0         # Set $t0 to starting array address
+    addi $t1, $zero, 0          # Set index to 0
+    
+    # Iterate through the array provided
+move_left_start:
+    add $t0, $a0, $t1                   # Add index offset to the original address
+    lw $t2, 0($t0)                      # Load value of element at array's current index
+    addi $t3, $t2, -4                   # Subtract 4 from the original value and store it in $t2
+    sw $t3, 0($t0)                      # Store the updated value in the array
+    addi $t1, $t1, 4                    # Increment the index by 4
+    beq $t1, 16, move_left_end          # If $t1 == 16, array has been fully iterated through, exit loop
+    j move_left_start                   # If array has not been fully iterated through, go back to top of loop
+move_left_end:
+    jr $ra
+
+
+
+move_down:
+    # $a0: register to store the original array's address
+    # $t0: register to store the address at the current index
+    # $t1: register to store the index
+    # $t2: register to store the original value at element
+    # $t3: register to store the updated address
+    
+    # Get parameters from the stack
+    lw $a0, 0($sp)              # Get array address from the stack
+    addi $sp, $sp, 4            # Update stack pointer
+    
+    add $t0, $zero, $a0         # Set $t0 to starting array address
+    addi $t1, $zero, 0          # Set index to 0
+    
+    # Iterate through the array provided
+move_down_start:
+    add $t0, $a0, $t1           # Add index offset to the original address
+    lw $t2, 0($t0)              # Load value of element of array's current index
+    addi $t3, $t2, 128          # Add 128 to the original value and store it in $t3
+    sw $t3, 0($t0)              # Store the updated value in the array
+    addi $t1, $t1, 4            # Increment the index by 4
+    beq $t1, 16, move_down_end  # If $t1 == 16, array has been fully iterated through, exit loop
+    j move_down_start           # If array has not been fully iterated through, go back to top of loop
+move_down_end:
+    jr $ra
+# ---------------------------------------------------------------------------------------------------------------------------------------------------------
+# Functions for general drawing and setting
 draw_rectangle:
     # $a0: register to store original x offset
     # $a1: register to store original y offset
@@ -152,85 +498,103 @@ draw_line_end:
     
 draw_rectangle_end:
     jr $ra                      # return
-
-
-
-draw_T_tetromino:
-    # $a0: register to store original x offset value from the stack
-    # $a1: register to store original y offset value from the stack
-    # $t0: register to store x offset
-    # $t1: register to store y offset
-    # $t2: register to store width
-    # $t3: register to store length
-    # $t9: register to store the colour for the T tetromino (PINK)
     
-    # Get values from the stack
-    lw $a0, 0($sp)              # Get starting position x offset from the stack
+    
+    
+set_rectangle:
+    # Make a rectangle but instead of drawing to the bitmap, store into the given array
+    
+    # $a0: register to store original x offset
+    # $a1: register to store original y offset
+    # $t0: register for starting address
+    # $t1: register to store x offset
+    # $t2: register to store y offset
+    # $t3: register to store width in pixels
+    # $t4: register to store the length in pixels
+    # $t5: register to store current address
+    # $t6: register to store current array index
+    # $t7: register to store the address of array[i]
+    # $t9: register to store array[0]
+    
+    lw $t0, ADDR_DSPL           # set $t0 to starting address
+    lw $a0, 0($sp)              # Get x offset from the stack
+    addi $sp, $sp, 4            # Update stack pointer 
+    addi $t1, $a0, 0            # Set $t1 to $a0
+    lw $a1, 0($sp)              # Get y offset from the stack
     addi $sp, $sp, 4            # Update stack pointer
-    addi $t0, $a0, 0            # Store x offset in $t0
-    lw $a1, 0($sp)              # Get starting position y offset from the stack
+    addi $t2, $a1, 0            # Set $t2 to $a1
+    lw $t3, 0($sp)              # Get width from the stack
     addi $sp, $sp, 4            # Update stack pointer
-    addi $t1, $a1, 0            # Store y offset on $t1
-    
-    lw $t9, PINK                # Store the colour in $t9
-    
-    # Modify x offset to draw the 3 pixel horizontal line
-    addi $t0, $t0, -1           # Subtract one so position is at the start of the line
-    addi $t2, $zero, 3          # Store width value in $t2
-    addi $t3, $zero, 1          # Store length value in $t3
-    
-    # Put parameters onto the stack
-    # Need to save the values of $a0, $a1, and $t9 for later
-    addi $sp, $sp, -4           # Update the stack pointer
-    sw $ra, 0($sp)              # Store $ra on the stack
-    addi $sp, $sp, -4           # Update stack pointer
-    sw $a0, 0($sp)              # Store value of $a0 on stack
-    addi $sp, $sp, -4           # Update stack pointer
-    sw $a1, 0($sp)              # Store value of $a1 on stack
-    addi $sp, $sp, -4           # Update stack pointer
-    sw $t9, 0($sp)              # Store value of $t9 on stack
-    # Need to pass the values of $t0, $t1, $t2, $t3, and $t9 to the function
-    addi $sp, $sp, -4           # Update stack pointer
-    sw $t9, 0($sp)              # Store value of $t9 (colour) on stack
-    addi $sp, $sp, -4           # Update stack pointer
-    sw $t3, 0($sp)              # Store value of $t3 (length) on stack
-    addi $sp, $sp, -4           # Update stack pointer
-    sw $t2, 0($sp)              # Store value of $t2 (width) on stack
-    addi $sp, $sp, -4           # Update stack pointer
-    sw $t1, 0($sp)              # Store value of $t1 (y offset) on stack
-    addi $sp, $sp, -4           # Update stack pointer
-    sw $t0, 0($sp)              # Store value of $t0 (x offset) on stack
-    jal draw_rectangle          # Call function to draw line
-    
-    # Take parameters off of the stack
-    lw $t9, 0($sp)              # Remove colour value from the stack
+    lw $t4, 0($sp)              # Get length from the stack
     addi $sp, $sp, 4            # Update stack pointer
-    lw $t1, 0($sp)              # Remove original y offset from the stack
-    addi $sp, $sp 4             # Update stack pointer
-    lw $t0, 0($sp)              # Remove original x offset from the stack
-    addi $sp, $sp, 4            # Update stack pointer
-    lw $ra, 0($sp)              # Remove $ra from the stack
+    lw $t6, 0($sp)              # Get starting index from the stack
+    addi $sp, $sp, 4            # Update the stack
+    lw $t9, 0($sp)              # Get array from the stack
     addi $sp, $sp, 4            # Update stack pointer
     
-    # Modify values
-    addi $t1, $t1, 1            # Modify y offset to draw the 1 pixel below
-    addi $t2, $zero, 1          # Set width to 1
-    addi $t3, $zero, 1          # Set height to 1
-    # Put parameters onto the stack
-    # Need to pass the values of $t0, $t1, $t2, $t3, and $t9 to the function
-    addi $sp, $sp, -4           # Update stack pointer
-    sw $t9, 0($sp)              # Store value of $t9 (colour) on stack
-    addi $sp, $sp, -4           # Update stack pointer
-    sw $t3, 0($sp)              # Store value of $t3 (length) on stack
-    addi $sp, $sp, -4           # Update stack pointer
-    sw $t2, 0($sp)              # Store value of $t2 (width) on stack
-    addi $sp, $sp, -4           # Update stack pointer
-    sw $t1, 0($sp)              # Store value of $t1 (y offset) on stack
-    addi $sp, $sp, -4           # Update stack pointer
-    sw $t0, 0($sp)              # Store value of $t0 (x offset) on stack
-    jal draw_rectangle          # Call function to draw line
+    # Index offset
+    sll $t6, $t6, 2             # Calculate off set of index
+    
+    # Horizontal offset and width
+    sll $t1, $a0, 2             # Calculate horizontal offset (x offset * 4)
+    sll $t3, $t3, 2             # Convert the width from pixels to bytes (multiply by 4)
+    add $t3, $t3, $t1           # Add original starting point to width to get end width
+    
+    # Vertical offset and length
+    sll $t2, $t2, 7             # Calculate vertical offset (y offset * 128)
+    sll $t4, $t4, 7             # Convert the length from pixels to bytes (multiply by 128)
+    add $t4, $t4, $t2           # Add original starting point to the length to get the end length
+    
+set_rectangle_top:
+    sll $t1, $a0, 2             # Calculate horizontal offset (x offset * 4)
+    add $t5, $t1, $t2           # Update current offset value where the pixel will be drawn
+    
+set_line_top:
+    add $t5, $t1, $t2                   # Calculate total offset
+    add $t5, $t5, $t0                   # Add offset to starting address
+    add $t7, $t9, $t6                   # $t7 holds the array at index offset i
+    sw $t5, 0($t7)                      # Store the value of $t5 in array at index i
+    addi $t6, $t6, 4                    # Increment index
+    addi $t1, $t1, 4                    # Increment horizontal offset
+    beq $t1, $t3, set_line_end          # Check if offset == width, if so exit loop
+    j set_line_top                      # Jump back to top of loop
+    
+set_line_end:
+    addi $t2, $t2, 128                  # Increment the vertical offset
+    beq $t2 ,$t4, set_rectangle_end     # Check if length offset == end length, if so exit loop
+    j set_rectangle_top                # Jump back to top of loop
+    
+set_rectangle_end:
     jr $ra                      # return
+
+
+draw_tetromino:
+    # $a0: register to store the original array's address
+    # $a1: register to store the colour
+    # $t0: register to store the value the ith element in the array
+    # $t1: register to store the index
+    # $t2: register to store value of current array element
     
+    # Get parameters from the stack
+    lw $a0, 0($sp)              # Get array address from the stack
+    addi $sp, $sp, 4            # Update stack pointer
+    lw $a1, 0($sp)              # Get colour from the stack
+    addi, $sp, $sp, 4           # Update stack pointer
+    
+    add $t0, $zero, $a0         # Set $t0 to starting array address
+    addi $t1, $zero, 0          # Set index to 0
+    
+    # Iterate through the array provided
+draw_tetromino_start:
+    add $t0, $a0, $t1                   # Add index offset to original address
+    lw $t2, 0($t0)                      # Store bitmap address in $t2
+    sw $a1, 0($t2)                      # Draw pixel on bitmap
+    add $t1, $t1, 4                     # Increment index by 4
+    beq $t1, 16, draw_tetromino_end     # If $t1 == 16, array has been fully iterated through, exit loop
+    j draw_tetromino_start              # If array has not been fully iterates through, go back to top of loop
+draw_tetromino_end:
+    jr $ra                      # return
+
 # -----------------------------------------------------------------------------------------------------------------------------
 # Functions for drawing background
 draw_checkboard:
@@ -295,7 +659,268 @@ draw_floor:
     j draw_floor
 end_draw_floor:
     jr $ra
+    
+    
+    
+draw_background:
+    # Need to store $ra in the stack 
+    addi $sp, $sp, -4   # Update stack pointer
+    sw $ra, 0($sp)      # Store $ra on the stack
+    
+    lw $t0, ADDR_DSPL   # $t0 stores the base address for display
+    lw $t1, LIGHT_GREY  # $t1 stores one of the bg colours
+    lw $t2, DARK_GREY   # $t2 stores another one of the bg colours
+    lw $t7, DARK_PURPLE
+    
+    add $t5, $zero, $zero # initialize loop variables
+    addi $t6, $zero, 16 
+    jal draw_checkboard
+    
+    wall_drawing:
+        lw $t0, ADDR_DSPL # re-initialize loop variables and address
+        add $t5, $zero, $zero 
+        addi $t6, $zero, 32
+        jal draw_left_wall
+        
+        lw $t0, ADDR_DSPL # re-initialize loop variables and address
+        add $t5, $zero, $zero
+        addi $t6, $zero, 32
+        jal draw_right_wall
+        
+        lw $t0, ADDR_DSPL # re-initialize loop variables and address
+        add $t5, $zero, $zero
+        addi $t6, $zero, 32
+        jal draw_floor
+        
+        lw $ra, 0($sp)      # Remove $ra from the stack
+        addi $sp, $sp, 4    # Update stack pointer
+        jr $ra              # Return
 
-exit:
-li $v0, 10 # terminate the program gracefully
-syscall
+# -------------------------------------------------------------------------------------------------------------------------------------------------------
+# Functions for T-Tetromino
+create_T_tetromino:
+    # $a0: register to store original x offset value from the stack
+    # $a1: register to store original y offset value from the stack
+    # $t0: register to store x offset
+    # $t1: register to store y offset
+    # $t2: register to store width
+    # $t3: register to store length
+    # $t4: register to store array index
+    # $t9: register to store the array at index 0
+    
+    # Get values from the stack
+    lw $a0, 0($sp)              # Get starting position x offset from the stack
+    addi $sp, $sp, 4            # Update stack pointer
+    addi $t0, $a0, 0            # Store x offset in $t0
+    lw $a1, 0($sp)              # Get starting position y offset from the stack
+    addi $sp, $sp, 4            # Update stack pointer
+    addi $t1, $a1, 0            # Store y offset on $t1
+    
+    la $t9, T_TETROMINO         # Store the starting address in $t9
+    addi $t4, $zero, 0          # Set array index to 0
+    
+    # Modify x offset to draw the 3 pixel horizontal line
+    addi $t0, $t0, -1           # Subtract 1 so position is at the start of the line
+    addi $t2, $zero, 3          # Store width value in $t2
+    addi $t3, $zero, 1          # Store length value in $t3
+    
+    # Put parameters onto the stack
+    # Need to save the values of $a0, $a1, and $t9 for later
+    addi $sp, $sp, -4           # Update the stack pointer
+    sw $ra, 0($sp)              # Store $ra on the stack
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $a0, 0($sp)              # Store value of $a0 on stack
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $a1, 0($sp)              # Store value of $a1 on stack
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t9, 0($sp)              # Store value of $t9 on stack
+    # Need to pass the values of $t0, $t1, $t2, $t3, and $t9 to the function
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t9, 0($sp)              # Store value of $t9 (starting address) on stack
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t4, 0($sp)              # Store the value of $t4 (array index) on stack
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t3, 0($sp)              # Store value of $t3 (length) on stack
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t2, 0($sp)              # Store value of $t2 (width) on stack
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t1, 0($sp)              # Store value of $t1 (y offset) on stack
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t0, 0($sp)              # Store value of $t0 (x offset) on stack
+    jal set_rectangle           # Call function to set line
+    
+    # Take parameters off of the stack
+    lw $t9, 0($sp)              # Remove array address from the stack
+    addi $sp, $sp, 4            # Update stack pointer
+    lw $t1, 0($sp)              # Remove original y offset from the stack
+    addi $sp, $sp 4             # Update stack pointer
+    lw $t0, 0($sp)              # Remove original x offset from the stack
+    addi $sp, $sp, 4            # Update stack pointer
+    
+    # Modify values
+    addi $t1, $t1, 1            # Modify y offset to set the 1 pixel below
+    addi $t2, $zero, 1          # Set width to 1
+    addi $t3, $zero, 1          # Set height to 1
+    addi $t4, $zero, 3          # Set array index to 3
+    # Put parameters onto the stack
+    # Need to pass the values of $t0, $t1, $t2, $t3, and $t9 to the function
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t9, 0($sp)              # Store value of $t9 (array address) on stack
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t4, 0($sp)              # Store value of $t4 (array index) on stack
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t3, 0($sp)              # Store value of $t3 (length) on stack
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t2, 0($sp)              # Store value of $t2 (width) on stack
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t1, 0($sp)              # Store value of $t1 (y offset) on stack
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $t0, 0($sp)              # Store value of $t0 (x offset) on stack
+    jal set_rectangle           # Call function to set line
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update stack pointer
+    jr $ra                      # return
+    
+ 
+    
+create_T_R1_tetromino:
+    # $a0: register to store the original starting position address
+    # $t0: register to store the current address of a pixel to be added to the T_TETROMINO_R1 array
+    # $t1: register to store the current index
+    # $t2: register to store current address being written to
+    # $t9: register to store the starting address for the T_TETROMINO_R1 array
+    # Given the starting position's current address, not the offset from the starting address
+    
+    la $t9, T_TETROMINO_R1      # Store the starting address of T_TETROMINO_R1 array in $t9
+    
+    lw $a0, 0($sp)              # Get starting position's current address from the stack
+    addi $sp, $sp, 4            # Update stack pointer
+    addi $t1, $zero, 0          # Set index to 0
+    add $t2, $zero, $t9         # Set current address being written to to be the first address
+    add $t0, $zero, $a0         # Set register $t0 to be the starting address given 
+    addi $t0, $t0, -128         # Subtract 128 to get pixel above starting posiiton
+    sw $t0, 0($t2)              # Store the pixel address in $t0 at the first index
+    
+    addi $t1, $t1, 4            # Set index to get second element
+    add $t2, $t9, $t1           # Store address for second element in $t2
+    addi $t0, $a0, -4           # Set $t0 to be the pixel before the starting position
+    sw $t0, 0($t2)              # Store the pixel address as the second element
+    
+    addi $t1, $t1, 4            # Set index to get third element
+    add $t2, $t9, $t1           # Store address for the third element in $t2
+    add $t0, $zero, $a0         # Set $t0 to be the starting position
+    sw $t0, 0($t2)              # Store the pixel address as the second element
+    
+    addi $t1, $t1, 4            # Set index to get the fourth element
+    add $t2, $t9, $t1           # Store addresss for the fourth element in $t2
+    addi $t0, $a0, 128          # Set $t0 to be the pixel below the starting position
+    sw $t0, 0($t2)              # Store the pixel address as the second element
+    jr $ra                      # Return
+    
+    
+    
+create_T_R2_tetromino:
+    # $a0: register to store the original starting position address
+    # $t0: register to store the current address of a pixel to be added to the T_TETROMINO_R2 array
+    # $t1: register to store the current index
+    # $t2: register to store current address being written to
+    # $t9: register to store the starting address for the T_TETROMINO_R2 array
+    # Given the starting position's current address, not the offset from the starting address
+    
+    la $t9, T_TETROMINO_R2      # Store the array address in register $t9
+    
+    lw $a0, 0($sp)              # Get starting position's address on bitmap from the stack
+    addi $sp, $sp, 4            # Update the stack pointer
+    
+    addi $t1, $zero, 0          # Set index to 0
+    add $t2, $t9, $t1           # Set $t2 to be the current address being written to
+    addi $t0, $a0, -128         # Subtract 128 from the starting position to get the pixel above
+    sw $t0, 0($t2)              # Store the address of the pixel at $t0 in the array as the first element
+    
+    addi $t1, $t1, 4            # Set index to 1
+    add $t2, $t9, $t1           # Set $t2 to be the current address being written to
+    addi $t0, $a0, -4           # Subtract 4 from the starting position to get the pixel to the left
+    sw $t0, 0($t2)              # Store the address of the pixel at $t0 in the array as the second element
+    
+    addi $t1, $t1, 4            # Set index to 2
+    add $t2, $t9, $t1           # Set $t2 to be the current address being written to
+    addi $t0, $a0, 0            # Set $t0 to the starting position
+    sw $t0, 0($t2)              # Store the address of the pixel at $t0 in the array as the third element
+    
+    addi $t1, $t1, 4            # Set index to 3
+    add $t2, $t9, $t1           # Set $t2 to be the current address being written to
+    addi $t0, $a0, 4            # Add 4 to the starting position to get the pixel to the right
+    sw $t0, 0($t2)              # Store the address of the pixel at $t0 in the array as the fourth element 
+    jr $ra                      # Return
+
+
+
+create_T_R3_tetromino:
+    # $a0: register to store the original starting position address
+    # $t0: register to store the current address of a pixel to be added to the T_TETROMINO_R3 array
+    # $t1: register to store the current index
+    # $t2: register to store current address being written to
+    # $t9: register to store the starting address for the T_TETROMINO_R3 array
+    # Given the starting position's current address, not the offset from the starting address
+    
+    la $t9, T_TETROMINO_R3      # Store the array address in register $t9
+    
+    lw $a0, 0($sp)              # Get starting position's address on bitmap from the stack
+    addi $sp, $sp, 4            # Update the stack pointer
+    
+    addi $t1, $zero, 0          # Set index to 0
+    add $t2, $t9, $t1           # Set $t2 to be the current address being written to
+    addi $t0, $a0, -128         # Subtract 128 from the starting position to get the pixel above
+    sw $t0, 0($t2)              # Store the address of the pixel at $t0 in the array as the first element
+    
+    addi $t1, $t1, 4            # Set index to 1
+    add $t2, $t9, $t1           # Set $t2 to be the current address being written to
+    addi $t0, $a0, 0            # Set $t0 to be the starting address
+    sw $t0, 0($t2)              # Store the address of the pixel at $t0 in the array as the second element
+    
+    addi $t1, $t1, 4            # Set index to 2
+    add $t2, $t9, $t1           # Set $t2 to be the current address being written to
+    addi $t0, $a0, 4            # Add 4 to the starting address to get the pixel to the right
+    sw $t0, 0($t2)              # Store the address of the pixel at $t0 in the array as the third element
+    
+    addi $t1, $t1, 4            # Set index to 3
+    add $t2, $t9, $t1           # Set $t2 to be the current address being written to
+    addi $t0, $a0, 128          # Add 128 to the starting position to get the pixel below
+    sw $t0, 0($t2)              # Store the address of the pixel at $t0 in the array as the fourth element
+    jr $ra                      # Return
+    
+    
+    
+T_R3_to_R_tetromino:
+    # $a0: register to store the original starting position address
+    # $t0: register to store the current address of a pixel to be added to the T_TETROMINO array
+    # $t1: register to store the current index
+    # $t2: register to store current address being written to
+    # $t9: register to store the starting address for the T_TETROMINO array
+    # Given the starting position's current address, not the offset from the starting address
+    
+    la $t9, T_TETROMINO         # Store memory address for T_TETROMINO array
+    
+    lw $a0, 0($sp)              # Get starting position address from the stack
+    addi $sp, $sp, 4            # Update the stack pointer
+    
+    addi $t1, $zero, 0          # Set index to 0
+    add $t2, $t9, $t1           # Set $t2 to be the current address being written to
+    addi $t0, $a0, -4           # Subtract 4 from the starting position to get the pixel to the left
+    sw $t0, 0($t2)              # Store the address of the pixel at $t0 in the array as the first element
+    
+    addi $t1, $t1, 4            # Set index to 1
+    add $t2, $t9, $t1           # Set $t2 to be the current address being written to
+    addi $t0, $a0, 0            # Set $t0 to be the starting position
+    sw $t0, 0($t2)              # Store the address of the pixel at $t0 in the array as the second element
+    
+    addi $t1, $t1, 4            # Set index to 2
+    add $t2, $t9, $t1           # Set $t2 to be the current address being written to
+    addi $t0, $a0, 4            # Add 4 to the starting position to get the pixel to the right
+    sw $t0, 0($t2)              # Store the address of the pixel at $t0 in the array as the third element
+    
+    addi $t1, $t1, 4            # Set index yo 3
+    add $t2, $t9, $t1           # Set $t2 to be the current address being written to
+    addi $t0, $a0, 128          # Add 128 to the starting position to get the pixel below
+    sw $t0, 0($t2)              # Store the address of the pixel at $t0 in the array as the fourth element
+    jr $ra                      # Return
