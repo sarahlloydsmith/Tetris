@@ -43,13 +43,17 @@ LIGHT_GREY:
     .word 0x303030 # colour for background
 DARK_GREY:
     .word 0x202020 # colour for background
+RED:
+    .word 0xff0000 # colour for GAME OVER
+WHITE:
+    .word 0xffffff # colour for PAUSED
 
 ##############################################################################
 # Mutable Data
 ##############################################################################
 
 GRAVITY:
-    .word 60        # Store increment value for gravity
+    .word 60       # Store increment value for gravity
 GRAVITY_COUNTER:
     .word 0         # Store
 ROTATION:
@@ -130,6 +134,10 @@ main:
     jal set_background      # Set the background
     jal set_bitmap_copy     # Set the bitmap copy
     
+    addi $s7, $zero, 1000    # Maximum time
+    addi $s4, $zero, 30     # Maximum gravity
+    addi $s6, $zero, 1      # Current gravity
+    addi $s5, $zero, 0      # Current time
     # Drawing the starting tetromino
     # $t0: starting x offset
     # $t1: starting y offset 
@@ -224,16 +232,30 @@ game_loop:
 	# 1a. Check if key has been pressed
 	lw $t0, ADDR_KBRD              # Set $t0 to the address of the keyboard
 	lw $t1, 0($t0)                 # Load the first word from the keyboard
+	li $s4, 1000
 	beq $t1, 1, key_pressed        # If key was pressed ($t1 == 1), jump to key_pressed
-	j sleep                 # If key was not pressed, continue to rest of game_loop
+	
+	# Code to increase speed of gravity
+	beq $s5, $s7, if_current_time_equals_max_time
+	else_current_time_dne_max_time:
+	   addi $s5, $s5, 1
+	   j pass
+	if_current_time_equals_max_time:
+	   li $s5, 0
+	   beq $s6, $s4, pass
+	   addi $s6, $s6, 5
+
+	pass:
+	j sleep                        # If key was not pressed, continue to rest of game_loop
     # 1b. Check which key has been pressed
 key_pressed:
     lw $t2, 4($t0)                  # Load second word into $t2
     beq $t2, 97, pressed_a          # Check if a was pressed
-    beq $t2, 115, pressed_s         # Check if s was pressed, if so check if there is a downward collision
+    beq $t2, 115, pressed_s_start         # Check if s was pressed, if so check if there is a downward collision
     beq $t2, 100, pressed_d         # Check if d was pressed
     beq $t2, 119, pressed_w         # Check if w was pressed
     beq $t2, 113, pressed_q         # Check if q was pressed
+    beq $t2, 112, pressed_p         # Check if p was pressed
     j sleep
     # 2a. Check for collisions (down-ward collisions are checked in the pressed_s branch)
     
@@ -255,14 +277,14 @@ sleep:
     la $t5, GRAVITY_COUNTER         # Load address to update later
     lw $t4, GRAVITY                 # Store value for GRAVITY in $t4
     
-	li $v0, 32
-	li $a0, 17
-	syscall                            # Sleep for 17 milliseconds
-	
-	beq $t3, $t4, call_gravity         # When counter reaches value for GRAVITY, move tetromino down 1
-	addi $t3, $t3, 1                   # Increase counter value by 1
-	sw $t3, 0($t5)                     # Store updated value in GRAVITY_COUNTER
-	b game_loop
+    li $v0, 32
+    li $a0, 17
+    syscall                            # Sleep for 17 milliseconds
+    	
+    bgt $t3, $t4, call_gravity         # When counter reaches value for GRAVITY, move tetromino down 1
+    add $t3, $t3, $s6                   # Increase counter value by 1
+    sw $t3, 0($t5)                     # Store updated value in GRAVITY_COUNTER
+    b game_loop
 	
 call_gravity:
 	jal pressed_s                      # move tetromino down
@@ -273,7 +295,7 @@ call_gravity:
 
     #5. Go back to 1
      b game_loop
-     
+ 
 # --------------------------------------------------------------------------------------------------------------------------------------------------------
 # Function to determine current array and corresponding colour
 get_array_and_colour:
@@ -494,6 +516,33 @@ O_R3_tetromino:
 #---------------------------------------------------------------------------------------------------------------------------------------------------------
 # Code to handle what key was pressed
 
+rotate_sound_effect:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+    
+    li $v0, 31    # async play note syscall
+    li $a0, 60    # midi pitch
+    li $a1, 1000  # duration
+    li $a2, 105     # instrument
+    li $a3, 100   # volume
+    syscall
+    
+end_rotate_sound_effect:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
+
+key_pressed_in_paused:
+    lw $t2, 4($t0)                  # Load second word into $t2
+    beq $t2, 112, game_loop        # Check if p was pressed
+
+pressed_p:
+    jal draw_paused
+    pressed_p_loop:
+        lw $t0, ADDR_KBRD              
+    	lw $t1, 0($t0)                
+    	beq $t1, 1, key_pressed_in_paused
+    	j pressed_p_loop
 pressed_a:
     # $s0: register to store array address
     # $s1: register to store the colour of the pixel
@@ -502,6 +551,8 @@ pressed_a:
     addi $s0, $v0, 0                # Set $s0 to be the array from the function
     lw $s1, 0($sp)                  # Remove the colour from the stack and store it in $s1
     addi $sp, $sp, 4                # Update stack pointer
+    
+    jal pre_left_collision_check
     
     # Update array to move one pixel to the left
     addi $sp, $sp, -4               # Update stack pointer
@@ -517,8 +568,9 @@ pressed_a:
     jal draw_tetromino              # Draw updated tetromino
     j game_loop
 
-
-
+pressed_s_start:
+    jal pressed_s
+    j sleep
 pressed_s:
     # $s0: register to store array address
     # $s1: register to store the colour of the pixel
@@ -560,6 +612,8 @@ pressed_d:
     addi $s0, $v0, 0                # Set $s0 to be the array from the function
     lw $s1, 0($sp)                  # Remove the colour from the stack and store it in $s1
     addi $sp, $sp, 4                # Update stack pointer
+    
+    jal pre_right_collision_check
     
     # Update array to move right by one pixel
     addi $sp, $sp, -4               # Update stack pointer
@@ -766,6 +820,7 @@ pressed_w_continued:
     addi $sp, $sp, -4               # Update stack popinter
     sw $t2, 0($sp)                  # Store the address of the rotated tetromino on the stack
     jal check_rotation_collision    # Check if there is any collision when rotating, continue if there is not
+    jal rotate_sound_effect
     # Retrieve saved values from the stack
     lw $t4, 0($sp)                  # Load value back into $t4
     addi $sp, $sp, 4                # Update stack pointer
@@ -1219,6 +1274,14 @@ check_second:
     bne $t5, 0x202020, handle_collision
     jr $ra
 handle_collision:
+    # Play sound effect during collision
+    li $v0, 31    # async play note syscall
+    li $a0, 60    # midi pitch
+    li $a1, 1000  # duration
+    li $a2, 113     # instrument
+    li $a3, 100   # volume
+    syscall
+    
     jal set_bitmap_copy             # Create a copy of the bitmap
     jal check_for_complete_lines    # Check to see if any lines have been completed and need clearing
     jal is_game_over                # Check if any tetrominoes reach the top
@@ -1327,6 +1390,14 @@ finished_line:
     j remove_line_start                 # If not finished, go back to start of loop for the new line
 
 finished_removal:
+    # Play clear line sound effect
+    li $v0, 31    # async play note syscall
+    li $a0, 60    # midi pitch
+    li $a1, 2000  # duration
+    li $a2, 60     # instrument
+    li $a3, 100   # volume
+    syscall
+    
     j check_for_complete_lines_again    # Re-check the lines
     
 is_game_over:
@@ -1355,9 +1426,53 @@ is_game_over_start:
 
 game_not_over:
     jr $ra                              # Game is not over
+
+restart:
+    lw $t3, 4($t0)
+    beq $t3, 113, pressed_q
+    beq $t3, 114, main              # Check if r was pressed, then restart
     
 game_over:
-    j main                              # Game is over, currently start a new game automatically
+    li $v0, 31    # async play note syscall
+    li $a0, 60    # midi pitch
+    li $a1, 1000  # duration
+    li $a2, 18   # instrument
+    li $a3, 100   # volume
+    syscall
+    
+    lw $t0, ADDR_DSPL
+    lw $t1, RED
+    
+    jal draw_game_over
+    game_over_loop:
+        lw $t0, ADDR_KBRD
+        lw $t2, 0($t0)
+        beq $t2, 1, restart         # Check for keyboard input
+        
+        li $v0, 32
+        li $a0, 300
+        syscall                            # Sleep for 300 milliseconds
+        
+        # Draw flashing line under R
+        lw $t0, ADDR_DSPL
+        lw $t1, WHITE
+        addi $t0, $t0, 3972
+        addi $t2, $zero, 0
+        addi $t3, $zero, 5
+        jal draw_horizontal_line
+        
+        li $v0, 32
+        li $a0, 300
+        syscall                            # Sleep for 300 milliseconds
+        
+        lw $t0, ADDR_DSPL
+        lw $t1, DARK_PURPLE
+        addi $t0, $t0, 3972
+        addi $t2, $zero, 0
+        addi $t3, $zero, 5
+        jal draw_horizontal_line
+        
+        j game_over_loop
     
 check_rotation_collision:
     # $a0: starting address for tetromino array given
@@ -3217,3 +3332,1675 @@ O_R3_to_R_tetromino:
     addi $t0, $a0, 132          # Add 132 to the starting position to get the pixel 1 row below and 1 to the right
     sw $t0, 0($t2)              # Store the pixel address held in $t0 at the fourth index
     jr $ra                      # Return
+
+# Left and right collision checks ---------------------------------------------------------------------------------------------------------------------
+# Original T-tetromino -------------------------------------------------------------------------------------------------------------------------------
+T_TETROMINO_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 116, T_TETROMINO_left_check_end
+    bne $t1, 0, T_TETROMINO_left_check_end
+    
+    la $t2, T_TETROMINO
+    jal left_collision_check
+    
+    addi $t2, $t2, 12
+    jal left_collision_check
+T_TETROMINO_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+    
+T_TETROMINO_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 116, T_TETROMINO_right_check_end
+    bne $t1, 0, T_TETROMINO_right_check_end
+    
+    la $t2, T_TETROMINO
+    addi $t2, $t2, 8
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    
+T_TETROMINO_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+# T-Tetromino rotated once
+T_TETROMINO_R1_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 116, T_TETROMINO_R1_left_check_end
+    bne $t1, 1, T_TETROMINO_R1_left_check_end
+    
+    la $t2, T_TETROMINO_R1
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+    
+    addi $t2, $t2, 8
+    jal left_collision_check
+T_TETROMINO_R1_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+
+T_TETROMINO_R1_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 116, T_TETROMINO_R1_right_check_end
+    bne $t1, 1, T_TETROMINO_R1_right_check_end
+    
+    la $t2, T_TETROMINO_R1
+    jal right_collision_check
+    
+    addi $t2, $t2, 8
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+T_TETROMINO_R1_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+# T-Tetromino rotated twice
+T_TETROMINO_R2_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 116, T_TETROMINO_R2_left_check_end
+    bne $t1, 2, T_TETROMINO_R2_left_check_end
+    
+    la $t2, T_TETROMINO_R2
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+T_TETROMINO_R2_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+    
+T_TETROMINO_R2_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 116, T_TETROMINO_R2_right_check_end
+    bne $t1, 2, T_TETROMINO_R2_right_check_end
+    
+    la $t2, T_TETROMINO_R2
+    jal right_collision_check
+    
+    addi $t2, $t2, 12
+    jal right_collision_check
+T_TETROMINO_R2_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+# T-Tetromino rotated thrice
+T_TETROMINO_R3_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 116, T_TETROMINO_R3_left_check_end
+    bne $t1, 3, T_TETROMINO_R3_left_check_end
+    
+    la $t2, T_TETROMINO_R3
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+    
+    addi $t2, $t2, 8
+    jal left_collision_check
+T_TETROMINO_R3_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+    
+T_TETROMINO_R3_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 116, T_TETROMINO_R3_right_check_end
+    bne $t1, 3, T_TETROMINO_R3_right_check_end
+    
+    la $t2, T_TETROMINO_R3
+    jal right_collision_check
+    
+    addi $t2, $t2, 8
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+T_TETROMINO_R3_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+# Original J-tetromino -------------------------------------------------------------------------------------------------------------------------------
+J_TETROMINO_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 106, J_TETROMINO_left_check_end
+    bne $t1, 0, J_TETROMINO_left_check_end
+    
+    la $t2, J_TETROMINO
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+J_TETROMINO_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+
+J_TETROMINO_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 106, J_TETROMINO_right_check_end
+    bne $t1, 0, J_TETROMINO_right_check_end
+    
+    la $t2, J_TETROMINO
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+    
+    addi $t2, $t2, 8
+    jal right_collision_check
+J_TETROMINO_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+# J-tetromino rotated once
+J_TETROMINO_R1_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 106, J_TETROMINO_R1_left_check_end
+    bne $t1, 1, J_TETROMINO_R1_left_check_end
+    
+    la $t2, J_TETROMINO_R1
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+J_TETROMINO_R1_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+
+J_TETROMINO_R1_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 106, J_TETROMINO_R1_right_check_end
+    bne $t1, 1, J_TETROMINO_R1_right_check_end
+    
+    la $t2, J_TETROMINO_R1
+    addi $t2, $t2, 12
+    jal right_collision_check
+J_TETROMINO_R1_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+# J-tetromino rotated twice
+J_TETROMINO_R2_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 106, J_TETROMINO_R2_left_check_end
+    bne $t1, 2, J_TETROMINO_R2_left_check_end
+    
+    la $t2, J_TETROMINO_R2
+    jal left_collision_check
+    
+    addi $t2, $t2, 8
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+J_TETROMINO_R2_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+
+J_TETROMINO_R2_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 106, J_TETROMINO_R2_right_check_end
+    bne $t1, 2, J_TETROMINO_R2_right_check_end
+    
+    la $t2, J_TETROMINO_R2
+    addi $t2, $t2, 4
+    jal right_collision_check
+J_TETROMINO_R2_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+# J-tetromino rotated thrice
+J_TETROMINO_R3_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 106, J_TETROMINO_R3_left_check_end
+    bne $t1, 3, J_TETROMINO_R3_left_check_end
+    
+    la $t2, J_TETROMINO_R3
+    jal left_collision_check
+J_TETROMINO_R3_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+
+J_TETROMINO_R3_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 106, J_TETROMINO_R3_right_check_end
+    bne $t1, 3, J_TETROMINO_R3_right_check_end
+    
+    la $t2, J_TETROMINO_R3
+    addi $t2, $t2, 8
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+J_TETROMINO_R3_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+# Original L-tetromino -------------------------------------------------------------------------------------------------------------------------------
+L_TETROMINO_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 108, L_TETROMINO_left_check_end
+    bne $t1, 0, L_TETROMINO_left_check_end
+    
+    la $t2, L_TETROMINO
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+L_TETROMINO_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+
+L_TETROMINO_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 108, L_TETROMINO_right_check_end
+    bne $t1, 0, L_TETROMINO_right_check_end
+    
+    la $t2, L_TETROMINO
+    addi $t2, $t2, 12
+    jal right_collision_check
+L_TETROMINO_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+# L-tetromino rotated once
+L_TETROMINO_R1_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 108, L_TETROMINO_R1_left_check_end
+    bne $t1, 1, L_TETROMINO_R1_left_check_end
+    
+    la $t2, L_TETROMINO_R1
+    jal left_collision_check
+    
+    addi $t2, $t2, 12
+    jal left_collision_check
+L_TETROMINO_R1_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+
+L_TETROMINO_R1_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 108, L_TETROMINO_right_check_end
+    bne $t1, 1, L_TETROMINO_right_check_end
+    
+    la $t2, L_TETROMINO_R1
+    addi $t2, $t2, 8
+    jal right_collision_check
+L_TETROMINO_R1_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+# L-tetromino rotated twice
+L_TETROMINO_R2_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 108, L_TETROMINO_R2_left_check_end
+    bne $t1, 2, L_TETROMINO_R2_left_check_end
+    
+    la $t2, L_TETROMINO_R2
+    jal left_collision_check
+L_TETROMINO_R2_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+
+L_TETROMINO_R2_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 108, L_TETROMINO_R2_right_check_end
+    bne $t1, 2, L_TETROMINO_R2_right_check_end
+    
+    la $t2, L_TETROMINO_R2
+    addi $t2, $t2, 4
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+L_TETROMINO_R2_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+# L-tetromino rotated thrice
+L_TETROMINO_R3_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 108, L_TETROMINO_R3_left_check_end
+    bne $t1, 3, L_TETROMINO_R3_left_check_end
+    
+    la $t2, L_TETROMINO_R3
+    addi $t2, $t2, 4
+    jal left_collision_check
+L_TETROMINO_R3_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+
+L_TETROMINO_R3_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 108, L_TETROMINO_R3_right_check_end
+    bne $t1, 3, L_TETROMINO_R3_right_check_end
+    
+    la $t2, L_TETROMINO_R3
+    jal right_collision_check
+    
+    addi $t2, $t2, 12
+    jal right_collision_check
+L_TETROMINO_R3_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+# Original Z-tetromino (or rotated twice) ------------------------------------------------------------------------------------------------------------------------
+Z_TETROMINO_R0_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 122, Z_TETROMINO_R0_left_check_end
+    bne $t1, 0, Z_TETROMINO_R0_left_check_end
+    
+    la $t2, Z_TETROMINO
+    jal left_collision_check
+    
+    addi $t2, $t2, 8
+    jal left_collision_check
+Z_TETROMINO_R0_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+Z_TETROMINO_R0_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 122, Z_TETROMINO_R0_right_check_end
+    bne $t1, 0, Z_TETROMINO_R0_right_check_end
+    
+    la $t2, Z_TETROMINO
+    addi $t2, $t2, 4
+    jal right_collision_check
+    
+    addi $t2, $t2, 8
+    jal right_collision_check
+Z_TETROMINO_R0_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+
+
+Z_TETROMINO_R2_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 122, Z_TETROMINO_R2_left_check_end
+    bne $t1, 2, Z_TETROMINO_R2_left_check_end
+    
+    la $t2, Z_TETROMINO_R2
+    jal left_collision_check
+    
+    addi $t2, $t2, 8
+    jal left_collision_check
+Z_TETROMINO_R2_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+Z_TETROMINO_R2_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 122, Z_TETROMINO_R2_right_check_end
+    bne $t1, 2, Z_TETROMINO_R2_right_check_end
+    
+    la $t2, Z_TETROMINO_R2
+    addi $t2, $t2, 4
+    jal right_collision_check
+    
+    addi $t2, $t2, 8
+    jal right_collision_check
+Z_TETROMINO_R2_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+# Z-tetromino rotated once or thrice
+Z_TETROMINO_R1_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 122, Z_TETROMINO_R1_left_check_end
+    bne $t1, 1, Z_TETROMINO_R1_left_check_end
+    
+    la $t2, Z_TETROMINO_R1
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+    
+    addi $t2, $t2, 8
+    jal left_collision_check
+Z_TETROMINO_R1_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+Z_TETROMINO_R1_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 122, Z_TETROMINO_R1_right_check_end
+    bne $t1, 1, Z_TETROMINO_R1_right_check_end
+    
+    la $t2, Z_TETROMINO_R1
+    jal right_collision_check
+    
+    addi $t2, $t2, 8
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+Z_TETROMINO_R1_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+
+Z_TETROMINO_R3_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 122, Z_TETROMINO_R3_left_check_end
+    bne $t1, 3, Z_TETROMINO_R3_left_check_end
+    
+    la $t2, Z_TETROMINO_R3
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+    
+    addi $t2, $t2, 8
+    jal left_collision_check
+Z_TETROMINO_R3_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+Z_TETROMINO_R3_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 122, Z_TETROMINO_R3_right_check_end
+    bne $t1, 3, Z_TETROMINO_R3_right_check_end
+    
+    la $t2, Z_TETROMINO_R3
+    jal right_collision_check
+    
+    addi $t2, $t2, 8
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+Z_TETROMINO_R3_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+# Original S-tetromino -------------------------------------------------------------------------------------------------------------------------------
+S_TETROMINO_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 115, S_TETROMINO_left_check_end
+    bne $t1, 0, S_TETROMINO_left_check_end
+    
+    la $t2, S_TETROMINO
+    jal left_collision_check
+    
+    addi $t2, $t2, 8
+    jal left_collision_check
+S_TETROMINO_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+S_TETROMINO_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 115, S_TETROMINO_right_check_end
+    bne $t1, 0, S_TETROMINO_right_check_end
+    
+    la $t2, S_TETROMINO
+    addi $t2, $t2, 4
+    jal right_collision_check
+    
+    addi $t2, $t2, 8
+    jal right_collision_check
+S_TETROMINO_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+
+# S-tetromino rotated once
+S_TETROMINO_R1_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 115, S_TETROMINO_R1_left_check_end
+    bne $t1, 1, S_TETROMINO_R1_left_check_end
+    
+    la $t2, S_TETROMINO_R1
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+S_TETROMINO_R1_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+S_TETROMINO_R1_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 115, S_TETROMINO_R1_right_check_end
+    bne $t1, 1, S_TETROMINO_R1_right_check_end
+    
+    la $t2, S_TETROMINO_R1
+    addi $t2, $t2, 8
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+S_TETROMINO_R1_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+    
+# S-tetromino rotated twice
+S_TETROMINO_R2_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 115, S_TETROMINO_R2_left_check_end
+    bne $t1, 2, S_TETROMINO_R2_left_check_end
+    
+    la $t2, S_TETROMINO_R2
+    jal left_collision_check
+    
+    addi $t2, $t2, 8
+    jal left_collision_check
+S_TETROMINO_R2_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+S_TETROMINO_R2_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 115, S_TETROMINO_R2_right_check_end
+    bne $t1, 2, S_TETROMINO_R2_right_check_end
+    
+    la $t2, S_TETROMINO_R2
+    addi $t2, $t2, 4
+    jal right_collision_check
+    
+    addi $t2, $t2, 8
+    jal right_collision_check
+S_TETROMINO_R2_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+    
+# S-tetromino rotated thrice
+S_TETROMINO_R3_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 115, S_TETROMINO_R3_left_check_end
+    bne $t1, 3, S_TETROMINO_R3_left_check_end
+    
+    la $t2, S_TETROMINO_R3
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+S_TETROMINO_R3_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+S_TETROMINO_R3_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 115, S_TETROMINO_R3_right_check_end
+    bne $t1, 3, S_TETROMINO_R3_right_check_end
+    
+    la $t2, S_TETROMINO_R3
+    addi $t2, $t2, 8
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+S_TETROMINO_R3_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+    
+# Original I-tetromino -------------------------------------------------------------------------------------------------------------------------------
+I_TETROMINO_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 105, I_TETROMINO_left_check_end
+    bne $t1, 0, I_TETROMINO_left_check_end
+    
+    la $t2, I_TETROMINO
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+I_TETROMINO_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+I_TETROMINO_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 105, I_TETROMINO_right_check_end
+    bne $t1, 0, I_TETROMINO_right_check_end
+    
+    la $t2, I_TETROMINO
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+I_TETROMINO_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+
+# I-tetromino rotated once
+I_TETROMINO_R1_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 105, I_TETROMINO_R1_left_check_end
+    bne $t1, 1, I_TETROMINO_R1_left_check_end
+    
+    la $t2, I_TETROMINO_R1
+    jal left_collision_check
+I_TETROMINO_R1_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+I_TETROMINO_R1_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 105, I_TETROMINO_R1_right_check_end
+    bne $t1, 1, I_TETROMINO_R1_right_check_end
+    
+    la $t2, I_TETROMINO_R1
+    addi $t2, $t2, 12
+    jal right_collision_check
+I_TETROMINO_R1_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+    
+# I-tetromino rotated twice
+I_TETROMINO_R2_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 105, I_TETROMINO_R2_left_check_end
+    bne $t1, 2, I_TETROMINO_R2_left_check_end
+    
+    la $t2, I_TETROMINO_R2
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+    
+    addi $t2, $t2, 4
+    jal left_collision_check
+I_TETROMINO_R2_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+I_TETROMINO_R2_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 105, I_TETROMINO_R2_right_check_end
+    bne $t1, 2, I_TETROMINO_R2_right_check_end
+    
+    la $t2, I_TETROMINO_R2
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+    
+    addi $t2, $t2, 4
+    jal right_collision_check
+I_TETROMINO_R2_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+    
+# I-tetromino rotated thrice
+I_TETROMINO_R3_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 105, I_TETROMINO_R3_left_check_end
+    bne $t1, 3, I_TETROMINO_R3_left_check_end
+    
+    la $t2, I_TETROMINO_R3
+    jal left_collision_check
+I_TETROMINO_R3_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+I_TETROMINO_R3_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 105, I_TETROMINO_R3_right_check_end
+    bne $t1, 3, I_TETROMINO_R3_right_check_end
+    
+    la $t2, I_TETROMINO_R3
+    addi $t2, $t2, 12
+    jal right_collision_check
+I_TETROMINO_R3_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+    
+# Original O-tetromino -------------------------------------------------------------------------------------------------------------------------------
+O_TETROMINO_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 111, O_TETROMINO_left_check_end
+    bne $t1, 0, O_TETROMINO_left_check_end
+    
+    la $t2, O_TETROMINO
+    jal left_collision_check
+    
+    addi $t2, $t2, 8
+    jal left_collision_check
+O_TETROMINO_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+O_TETROMINO_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 111, O_TETROMINO_right_check_end
+    bne $t1, 0, O_TETROMINO_right_check_end
+    
+    la $t2, O_TETROMINO
+    addi $t2, $t2, 4
+    jal right_collision_check
+    
+    addi $t2, $t2, 8
+    jal right_collision_check
+O_TETROMINO_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+
+# O-tetromino rotated once
+O_TETROMINO_R1_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 111, O_TETROMINO_R1_left_check_end
+    bne $t1, 1, O_TETROMINO_R1_left_check_end
+    
+    la $t2, O_TETROMINO_R1
+    jal left_collision_check
+    
+    addi $t2, $t2, 8
+    jal left_collision_check
+O_TETROMINO_R1_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+O_TETROMINO_R1_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 111, O_TETROMINO_R1_right_check_end
+    bne $t1, 1, O_TETROMINO_R1_right_check_end
+    
+    la $t2, O_TETROMINO_R1
+    addi $t2, $t2, 4
+    jal right_collision_check
+    
+    addi $t2, $t2, 8
+    jal right_collision_check
+O_TETROMINO_R1_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+
+# O-tetromino rotated twice
+O_TETROMINO_R2_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 111, O_TETROMINO_R2_left_check_end
+    bne $t1, 2, O_TETROMINO_R2_left_check_end
+    
+    la $t2, O_TETROMINO_R2
+    jal left_collision_check
+    
+    addi $t2, $t2, 8
+    jal left_collision_check
+O_TETROMINO_R2_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+O_TETROMINO_R2_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 111, O_TETROMINO_R2_right_check_end
+    bne $t1, 2, O_TETROMINO_R2_right_check_end
+    
+    la $t2, O_TETROMINO_R2
+    addi $t2, $t2, 4
+    jal right_collision_check
+    
+    addi $t2, $t2, 8
+    jal right_collision_check
+O_TETROMINO_R2_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+    
+# O-tetromino rotated thrice
+O_TETROMINO_R3_left_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 111, O_TETROMINO_R3_left_check_end
+    bne $t1, 3, O_TETROMINO_R3_left_check_end
+    
+    la $t2, O_TETROMINO_R3
+    jal left_collision_check
+    
+    addi $t2, $t2, 8
+    jal left_collision_check
+O_TETROMINO_R3_left_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+O_TETROMINO_R3_right_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    bne $t0, 111, O_TETROMINO_R3_right_check_end
+    bne $t1, 3, O_TETROMINO_R3_right_check_end
+    
+    la $t2, O_TETROMINO_R3
+    addi $t2, $t2, 4
+    jal right_collision_check
+    
+    addi $t2, $t2, 8
+    jal right_collision_check
+O_TETROMINO_R3_right_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+    
+# General left and right collision functions ---------------------------------------------------------------------------------------------------------
+pre_left_collision_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    lw $t0, TETROMINO_TYPE
+    lw $t1, ROTATION
+    
+    # Checking collisions for each tetromino
+    jal T_TETROMINO_left_check
+    jal T_TETROMINO_R1_left_check
+    jal T_TETROMINO_R2_left_check
+    jal T_TETROMINO_R3_left_check
+    jal J_TETROMINO_left_check
+    jal J_TETROMINO_R1_left_check
+    jal J_TETROMINO_R2_left_check
+    jal J_TETROMINO_R3_left_check
+    jal L_TETROMINO_left_check
+    jal L_TETROMINO_R1_left_check
+    jal L_TETROMINO_R2_left_check
+    jal L_TETROMINO_R3_left_check
+    jal Z_TETROMINO_R0_left_check
+    jal Z_TETROMINO_R1_left_check
+    jal Z_TETROMINO_R2_left_check
+    jal Z_TETROMINO_R3_left_check
+    jal S_TETROMINO_left_check
+    jal S_TETROMINO_R1_left_check
+    jal S_TETROMINO_R2_left_check
+    jal S_TETROMINO_R3_left_check
+    jal I_TETROMINO_left_check
+    jal I_TETROMINO_R1_left_check
+    jal I_TETROMINO_R2_left_check
+    jal I_TETROMINO_R3_left_check
+    jal O_TETROMINO_left_check
+    jal O_TETROMINO_R1_left_check
+    jal O_TETROMINO_R2_left_check
+    jal O_TETROMINO_R3_left_check
+pre_left_collision_checend:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+left_collision_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    lw $t3, 0($t2)              # Store the bitmap address of the first pixel of the tetromino in $t3
+    addi $t4, $t3, -4          
+    lw $t5, 0($t4)              # Store the colour of the pixel in $t5
+    
+    lw $t1, PINK
+    beq $t1, $t5, game_loop
+    lw $t1, BLUE
+    beq $t1, $t5, game_loop
+    lw $t1, GREEN
+    beq $t1, $t5, game_loop
+    lw $t1, YELLOW
+    beq $t1, $t5, game_loop
+    lw $t1, PURPLE
+    beq $t1, $t5, game_loop
+    lw $t1, INDIGO
+    beq $t1, $t5, game_loop
+    lw $t1, ORANGE
+    beq $t1, $t5, game_loop
+    lw $t1, DARK_PURPLE
+    beq $t1, $t5, game_loop
+left_collision_check_end:
+    # If reached, then no collision occurred
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+    
+pre_right_collision_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    lw $t0, TETROMINO_TYPE
+    lw $t1, ROTATION
+    
+    # Checking collisions for each tetromino
+    jal T_TETROMINO_right_check
+    jal T_TETROMINO_R1_right_check
+    jal T_TETROMINO_R2_right_check
+    jal T_TETROMINO_R3_right_check
+    jal J_TETROMINO_right_check
+    jal J_TETROMINO_R1_right_check
+    jal J_TETROMINO_R2_right_check
+    jal J_TETROMINO_R3_right_check
+    jal L_TETROMINO_right_check
+    jal L_TETROMINO_R1_right_check
+    jal L_TETROMINO_R2_right_check
+    jal L_TETROMINO_R3_right_check
+    jal Z_TETROMINO_R0_right_check
+    jal Z_TETROMINO_R1_right_check
+    jal Z_TETROMINO_R2_right_check
+    jal Z_TETROMINO_R3_right_check
+    jal S_TETROMINO_right_check
+    jal S_TETROMINO_R1_right_check
+    jal S_TETROMINO_R2_right_check
+    jal S_TETROMINO_R3_right_check
+    jal I_TETROMINO_right_check
+    jal I_TETROMINO_R1_right_check
+    jal I_TETROMINO_R2_right_check
+    jal I_TETROMINO_R3_right_check
+    jal O_TETROMINO_right_check
+    jal O_TETROMINO_R1_right_check
+    jal O_TETROMINO_R2_right_check
+    jal O_TETROMINO_R3_right_check
+pre_right_collision_check_end:
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+
+
+right_collision_check:
+    addi $sp, $sp, -4           # Update stack pointer
+    sw $ra, 0($sp)              # Store $ra on stack
+    
+    lw $t3, 0($t2)              # Store the bitmap address of the first pixel of the tetromino in $t3
+    addi $t4, $t3, 4             
+    lw $t5, 0($t4)              # Store the colour of the pixel in $t5
+    
+    lw $t1, PINK
+    beq $t1, $t5, game_loop
+    lw $t1, BLUE
+    beq $t1, $t5, game_loop
+    lw $t1, GREEN
+    beq $t1, $t5, game_loop
+    lw $t1, YELLOW
+    beq $t1, $t5, game_loop
+    lw $t1, PURPLE
+    beq $t1, $t5, game_loop
+    lw $t1, INDIGO
+    beq $t1, $t5, game_loop
+    lw $t1, ORANGE
+    beq $t1, $t5, game_loop
+    lw $t1, DARK_PURPLE
+    beq $t1, $t5, game_loop
+right_collision_check_end:
+    # If reached, then no collision occurred
+    lw $ra, 0($sp)              # Remove $ra from the stack
+    addi $sp, $sp, 4            # Update the stack
+    jr $ra
+    
+
+# Letter drawing functions ----------------------------------------------------------------------------------------------------------------
+draw_horizontal_line:
+    beq $t2, $t3, draw_horizontal_line_end
+    sw $t1, 0($t0)
+    addi $t0, $t0, 4
+    addi $t2, $t2, 1
+    j draw_horizontal_line
+draw_horizontal_line_end:
+    jr $ra
+    
+draw_vertical_line:
+    beq $t2, $t3, draw_vertical_line_end
+    sw $t1, 0($t0)
+    addi $t0, $t0, 128
+    addi $t2, $t2, 1
+    j draw_vertical_line
+draw_vertical_line_end:
+    jr $ra
+
+draw_game_over:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+    
+    jal draw_g
+    jal draw_a
+    jal draw_m
+    
+    addi $a0, $zero, 1116
+    addi $a1, $zero, 1120
+    addi $a2, $zero, 1376
+    addi $a3, $zero, 1760
+    jal draw_e
+    
+    jal draw_o
+    jal draw_v
+    
+    addi $a0, $zero, 1988
+    addi $a1, $zero, 1992
+    addi $a2, $zero, 2248
+    addi $a3, $zero, 2632
+    jal draw_e
+    
+    addi $a0, $zero, 2012
+    addi $a1, $zero, 2016
+    addi $a2, $zero, 2400
+    addi $a3, $zero, 2156
+    addi $s3, $zero, 2540
+    jal draw_r
+    
+    # For R at the bottom left corner
+    addi $a0, $zero, 3204
+    addi $a1, $zero, 3208
+    addi $a2, $zero, 3592
+    addi $a3, $zero, 3348
+    addi $s3, $zero, 3732
+    jal draw_r
+draw_game_over_end:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
+    
+draw_paused:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+    lw $t0, ADDR_DSPL
+    lw $t1, WHITE
+    
+    jal draw_p
+    jal draw_a_alt
+    jal draw_u
+    jal draw_s
+    jal draw_e_alt
+    jal draw_d
+draw_paused_end:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
+    
+# Drawing G -------------------------------------------------------------------------------------------------------------------------------
+draw_g:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+        
+    addi $t0, $t0, 1044
+    addi $t2, $zero, 0
+    addi $t3, $zero, 4
+    jal draw_horizontal_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1684
+    addi $t2, $zero, 0
+    addi $t3, $zero, 4
+    jal draw_horizontal_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1168
+    addi $t2, $zero, 0
+    addi $t3, $zero, 4
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    sw $t1, 1572($t0)
+    sw $t1, 1444($t0)
+    sw $t1, 1312($t0)
+    sw $t1, 1308($t0)
+end_draw_g:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
+
+# Drawing A -------------------------------------------------------------------------------------------------------------------------------
+draw_a:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1072
+    addi $t2, $zero, 0
+    addi $t3, $zero, 3
+    jal draw_horizontal_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1196
+    addi $t2, $zero, 0
+    addi $t3, $zero, 5
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1212
+    addi $t2, $zero, 0
+    addi $t3, $zero, 5
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1456
+    addi $t2, $zero, 0
+    addi $t3, $zero, 3
+    jal draw_horizontal_line
+end_draw_a:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
+
+# Drawing M -------------------------------------------------------------------------------------------------------------------------------
+draw_m:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1220
+    addi $t2, $zero, 0
+    addi $t3, $zero, 5
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1236
+    addi $t2, $zero, 0
+    addi $t3, $zero, 5
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1228
+    addi $t2, $zero, 0
+    addi $t3, $zero, 3
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    sw $t1, 1096($t0)
+    sw $t1, 1104($t0)
+end_draw_m:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
+    
+# Drawing E --------------------------------------------------------------------------------------------------------------------
+draw_e:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+
+    lw $t0, ADDR_DSPL
+    add $t0, $t0, $a0
+    addi $t2, $zero, 0
+    addi $t3, $zero, 6
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    add $t0, $t0, $a1
+    addi $t2, $zero, 0
+    addi $t3, $zero, 4
+    jal draw_horizontal_line
+    
+    lw $t0, ADDR_DSPL
+    add $t0, $t0, $a2
+    addi $t2, $zero, 0
+    addi $t3, $zero, 3
+    jal draw_horizontal_line
+
+    lw $t0, ADDR_DSPL
+    add $t0, $t0, $a3
+    addi $t2, $zero, 0
+    addi $t3, $zero, 4
+    jal draw_horizontal_line
+end_draw_e:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
+
+# Drawing O ------------------------------------------------------------------------------------------------------------------------------
+draw_o:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 2064
+    addi $t2, $zero, 0
+    addi $t3, $zero, 4
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 2084
+    addi $t2, $zero, 0
+    addi $t3, $zero, 4
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1940
+    addi $t2, $zero, 0
+    addi $t3, $zero, 4
+    jal draw_horizontal_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 2580
+    addi $t2, $zero, 0
+    addi $t3, $zero, 4
+    jal draw_horizontal_line
+end_draw_o:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
+
+# Drawing V ------------------------------------------------------------------------------------------------------------------------------
+draw_v:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1964
+    addi $t2, $zero, 0
+    addi $t3, $zero, 4
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    sw $t1, 2480($t0)
+    sw $t1, 2612($t0)
+    sw $t1, 2488($t0)
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1980
+    addi $t2, $zero, 0
+    addi $t3, $zero, 4
+    jal draw_vertical_line
+end_draw_v:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
+
+# Drawing R ------------------------------------------------------------------------------------------------------------------------------
+draw_r:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+    
+    lw $t0, ADDR_DSPL
+    add $t0, $t0, $a0 # 2012
+    addi $t2, $zero, 0
+    addi $t3, $zero, 6
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    add $t0, $t0, $a1 # 2016
+    addi $t2, $zero, 0
+    addi $t3, $zero, 3
+    jal draw_horizontal_line
+    
+    lw $t0, ADDR_DSPL
+    add $t0, $t0, $a2 # 2400
+    addi $t2, $zero, 0
+    addi $t3, $zero, 3
+    jal draw_horizontal_line
+    
+    lw $t0, ADDR_DSPL
+    add $t0, $t0, $a3 # 2156
+    addi $t2, $zero, 0
+    addi $t3, $zero, 2
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    add $t0, $t0, $s3 # 2540
+    addi $t2, $zero, 0
+    addi $t3, $zero, 2
+    jal draw_vertical_line
+end_draw_r:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
+    
+# Drawing p
+draw_p:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+    
+    addi $t0, $t0, 1040
+    addi $t2, $zero, 0
+    addi $t3, $zero, 3
+    jal draw_horizontal_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1296
+    addi $t2, $zero, 0
+    addi $t3, $zero, 3
+    jal draw_horizontal_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1168
+    addi $t2, $zero, 0
+    addi $t3, $zero, 4
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1048
+    addi $t2, $zero, 0
+    addi $t3, $zero, 3
+    jal draw_vertical_line
+end_draw_p:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
+
+# Drawing alternate a
+draw_a_alt:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1056
+    addi $t2, $zero, 0
+    addi $t3, $zero, 5
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1064
+    addi $t2, $zero, 0
+    addi $t3, $zero, 5
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    sw $t1, 1060($t0)
+    sw $t1, 1316($t0)
+end_draw_a_alt:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
+
+draw_u:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1072
+    addi $t2, $zero, 0
+    addi $t3, $zero, 5
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1080
+    addi $t2, $zero, 0
+    addi $t3, $zero, 5
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    sw $t1, 1588($t0)
+end_draw_u:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
+
+draw_s:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1088
+    addi $t2, $zero, 0
+    addi $t3, $zero, 3
+    jal draw_horizontal_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1344
+    addi $t2, $zero, 0
+    addi $t3, $zero, 3
+    jal draw_horizontal_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1600
+    addi $t2, $zero, 0
+    addi $t3, $zero, 3
+    jal draw_horizontal_line
+    
+    lw $t0, ADDR_DSPL
+    sw $t1, 1216($t0)
+    sw $t1, 1480($t0)
+end_draw_s:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
+
+draw_e_alt:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1104
+    addi $t2, $zero, 0
+    addi $t3, $zero, 5
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1108
+    addi $t2, $zero, 0
+    addi $t3, $zero, 2
+    jal draw_horizontal_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1364
+    addi $t2, $zero, 0
+    addi $t3, $zero, 2
+    jal draw_horizontal_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1620
+    addi $t2, $zero, 0
+    addi $t3, $zero, 2
+    jal draw_horizontal_line
+end_draw_e_alt:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
+
+draw_d:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1120
+    addi $t2, $zero, 0
+    addi $t3, $zero, 5
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    addi $t0, $t0, 1256
+    addi $t2, $zero, 0
+    addi $t3, $zero, 3
+    jal draw_vertical_line
+    
+    lw $t0, ADDR_DSPL
+    sw $t1, 1124($t0)
+    sw $t1, 1636($t0)
+end_draw_d:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    jr $ra
